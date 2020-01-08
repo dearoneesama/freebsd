@@ -49,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/socketvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/uio.h>
+#include <sys/stat.h>
 #include <sys/syslog.h>
 #include <sys/un.h>
 
@@ -1584,6 +1585,97 @@ out:
 	return (error);
 }
 
+int
+linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
+	struct stat sb;
+	struct tcp_info ti;
+	off_t bytes_read;
+	int ret;
+	l_long offset;
+	struct file *fp;
+	socklen_t size_val;
+
+	/* XXX: The differences between freebsd and linux sendfile:
+	 * - linux_sendfile doesn't send anything when count is 0
+	 * 	whereas freebsd_sendfile sends the whole file. However,
+	 * 	in linux_sendfile given fds are still checked for if they
+	 * 	are valid or not when count is 0.
+	 * - linux_sendfile can send to any fd whereas freebsd_sendfile
+	 *   	only sends to a socket stream. Note that only socket streams
+	 *   	are implemented here. Also note that the current offset into
+	 *   	the fdin shouldn't change before and after sendfile. Meaning
+	 *   	'lseek(fd, 0, SET_CUR)' should return same before and after.
+	 * - linux_sendfile doesn't have equivalents of flags and sf_hdtr of
+	 *   	freebsd_sendfile.
+	 * - linux_sendfile takes in an offset pointer and updates it to where it
+	 *   	was read until. freebsd_sendfile takes in an offset and a
+	 *   	'bytes read' parameter which is only filled if it isn't NULL.
+	 *   	We use this parameter to update the offset pointer if it exists.
+	 * - linux_sendfile returns bytes read on success while freebsd_sendfile
+	 *   	returns 0. We use the 'bytes read' parameter to get this value.
+	 */
+
+	/* fstat to get info on target fd */
+	ret = kern_fstat(td, arg->out, &sb);
+	if (ret < 0)
+		return (ret);
+
+	/* non-socket descriptor not implemented */
+	if (!S_ISSOCK(sb.st_mode)) {
+		linux_msg(td,
+		    "sendfile is only implemented for sending to a stream socket");
+		return (ENOSYS);
+	}
+
+	size_val = sizeof(ti);
+	ret = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
+	    &ti, UIO_SYSSPACE, &size_val);
+
+	/* datagram socket not implemented */
+	if (ret != 0) {
+		linux_msg(td,
+		    "sendfile is only implemented for sending to a stream socket");
+		return (ENOSYS);
+	}
+
+	/* offset is assumed as 0 when no pointer is given in linux_sendfile */
+	offset = 0;
+	if (arg->offset != NULL) {
+		ret = copyin(arg->offset, &offset, sizeof(arg->offset));
+		if (ret < 0)
+			return (ret);
+	}
+
+	if (offset < 0)
+		return (EINVAL);
+
+	bytes_read = 0;
+
+	AUDIT_ARG_FD(arg->in);
+	/* Checks if fdin is valid */
+	if ((ret = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
+		return (ret);
+
+	/* Call real sendfile iff count != 0 */
+	if (arg->count != 0) {
+		ret = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
+		    &bytes_read, 0, td);
+		if (ret < 0)
+			return (ret);
+
+		offset += bytes_read;
+	}
+
+	if (arg->offset != NULL) {
+		ret = copyout(&offset, arg->offset, sizeof(offset));
+		if (ret < 0)
+			return (ret);
+	}
+
+	td->td_retval[0] = (ssize_t) bytes_read;
+	return 0;
+}
+
 #if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
 
 /* Argument list sizes for linux_socketcall */
@@ -1598,7 +1690,7 @@ static const unsigned char lxs_args_cnt[] = {
 	5 /* setsockopt */,	5 /* getsockopt */,
 	3 /* sendmsg */,	3 /* recvmsg */,
 	4 /* accept4 */,	5 /* recvmmsg */,
-	4 /* sendmmsg */
+	4 /* sendmmsg */,	4 /* sendfile */
 };
 #define	LINUX_ARGS_CNT		(nitems(lxs_args_cnt) - 1)
 #define	LINUX_ARG_SIZE(x)	(lxs_args_cnt[x] * sizeof(l_ulong))
@@ -1667,6 +1759,8 @@ linux_socketcall(struct thread *td, struct linux_socketcall_args *args)
 		return (linux_recvmmsg(td, arg));
 	case LINUX_SENDMMSG:
 		return (linux_sendmmsg(td, arg));
+	case LINUX_SENDFILE:
+		return (linux_sendfile(td, arg));
 	}
 
 	uprintf("LINUX: 'socket' typ=%d not implemented\n", args->what);

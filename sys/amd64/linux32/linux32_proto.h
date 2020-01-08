@@ -604,7 +604,10 @@ struct linux_sigaltstack_args {
 	char uoss_l_[PADL_(l_stack_t *)]; l_stack_t * uoss; char uoss_r_[PADR_(l_stack_t *)];
 };
 struct linux_sendfile_args {
-	register_t dummy;
+	char out_l_[PADL_(l_int)]; l_int out; char out_r_[PADR_(l_int)];
+	char in_l_[PADL_(l_int)]; l_int in; char in_r_[PADR_(l_int)];
+	char offset_l_[PADL_(l_long *)]; l_long * offset; char offset_r_[PADR_(l_long *)];
+	char count_l_[PADL_(l_size_t)]; l_size_t count; char count_r_[PADR_(l_size_t)];
 };
 struct linux_vfork_args {
 	register_t dummy;
