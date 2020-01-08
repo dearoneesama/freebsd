@@ -1590,7 +1590,7 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 	struct stat sb;
 	struct tcp_info ti;
 	off_t bytes_read;
-	int ret;
+	int error;
 	l_long offset;
 	struct file *fp;
 	socklen_t size_val;
@@ -1616,9 +1616,9 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 	 */
 
 	/* fstat to get info on target fd */
-	ret = kern_fstat(td, arg->out, &sb);
-	if (ret < 0)
-		return (ret);
+	error = kern_fstat(td, arg->out, &sb);
+	if (error < 0)
+		return (error);
 
 	/* non-socket descriptor not implemented */
 	if (!S_ISSOCK(sb.st_mode)) {
@@ -1628,11 +1628,11 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 	}
 
 	size_val = sizeof(ti);
-	ret = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
+	error = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
 	    &ti, UIO_SYSSPACE, &size_val);
 
 	/* datagram socket not implemented */
-	if (ret != 0) {
+	if (error != 0) {
 		linux_msg(td,
 		    "sendfile is only implemented for sending to a stream socket");
 		return (ENOSYS);
@@ -1641,9 +1641,9 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 	/* offset is assumed as 0 when no pointer is given in linux_sendfile */
 	offset = 0;
 	if (arg->offset != NULL) {
-		ret = copyin(arg->offset, &offset, sizeof(arg->offset));
-		if (ret < 0)
-			return (ret);
+		error = copyin(arg->offset, &offset, sizeof(arg->offset));
+		if (error < 0)
+			return (error);
 	}
 
 	if (offset < 0)
@@ -1653,23 +1653,23 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 
 	AUDIT_ARG_FD(arg->in);
 	/* Checks if fdin is valid */
-	if ((ret = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
-		return (ret);
+	if ((error = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
+		return (error);
 
 	/* Call real sendfile iff count != 0 */
 	if (arg->count != 0) {
-		ret = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
+		error = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
 		    &bytes_read, 0, td);
-		if (ret < 0)
-			return (ret);
+		if (error < 0)
+			return (error);
 
 		offset += bytes_read;
 	}
 
 	if (arg->offset != NULL) {
-		ret = copyout(&offset, arg->offset, sizeof(offset));
-		if (ret < 0)
-			return (ret);
+		error = copyout(&offset, arg->offset, sizeof(offset));
+		if (error < 0)
+			return (error);
 	}
 
 	td->td_retval[0] = (ssize_t) bytes_read;
