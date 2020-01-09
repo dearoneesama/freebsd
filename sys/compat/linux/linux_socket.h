@@ -162,6 +162,7 @@ int linux_accept(struct thread *td, struct linux_accept_args *args);
 #define	LINUX_ACCEPT4		18
 #define	LINUX_RECVMMSG		19
 #define	LINUX_SENDMMSG		20
+#define	LINUX_SENDFILE		21
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
 /* Socket defines */
