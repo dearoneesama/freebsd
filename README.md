@@ -1,3 +1,9 @@
+![img](https://api.cirrus-ci.com/github/dearoneesama/freebsd.svg)
+
+Ceci est la branche actuelle de Yang en difficulté en cours. J'apprendrai autant que possible pour suivre.
+
+This is Yang's current struggling difficult working branch of FreeBSD. I will learn as much as I can to keep up.
+
 FreeBSD Source:
 ---------------
 This is the top level of the FreeBSD source directory.  This file
