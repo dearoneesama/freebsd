@@ -53,6 +53,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/syslog.h>
 #include <sys/un.h>
 
+#include <security/audit/audit.h>
+
 #include <net/if.h>
 #include <net/vnet.h>
 #include <netinet/in.h>
