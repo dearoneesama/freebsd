@@ -1,4 +1,4 @@
-![img](https://api.cirrus-ci.com/github/dearoneesama/freebsd.svg)
+[![Build Status](https://api.cirrus-ci.com/github/dearoneesama/freebsd.svg)](https://cirrus-ci.com/github/dearoneesama/freebsd)
 
 Ceci est la branche actuelle de Yang en difficulté en cours. J'apprendrai autant que possible pour suivre.
 
