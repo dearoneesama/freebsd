@@ -1588,7 +1588,8 @@ out:
 }
 
 int
-linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
+linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
+{
 	struct stat sb;
 	struct tcp_info ti;
 	off_t bytes_read;
@@ -1664,7 +1665,7 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 		    &bytes_read, 0, td);
 		if (error < 0)
 			return (error);
-
+		fdrop(fp, td);
 		offset += bytes_read;
 	}
 
@@ -1677,6 +1678,14 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg){
 	td->td_retval[0] = (ssize_t) bytes_read;
 	return 0;
 }
+
+#if defined(__amd64__) && defined(COMPAT_LINUX32)
+int
+linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
+{
+	return linux_sendfile(td, (struct linux_sendfile_args *)arg);
+}
+#endif
 
 #if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
 
