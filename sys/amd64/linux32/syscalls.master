@@ -414,7 +414,7 @@
 237	AUE_NULL	STD	{ int linux_fremovexattr(void); }
 238	AUE_NULL	STD	{ int linux_tkill(int tid, int sig); }
 239	AUE_SENDFILE	STD	{ int linux_sendfile64(l_int out, l_int in, \
-				    l_long *offset, l_size_t count); }
+				    l_loff_t *offset, l_size_t count); }
 240	AUE_NULL	STD	{ int linux_sys_futex(void *uaddr, int op, uint32_t val, \
 					struct l_timespec *timeout, uint32_t *uaddr2, uint32_t val3); }
 241	AUE_NULL	STD	{ int linux_sched_setaffinity(l_pid_t pid, l_uint len, \

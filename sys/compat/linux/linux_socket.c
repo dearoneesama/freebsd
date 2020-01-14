@@ -1676,14 +1676,77 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 	}
 
 	td->td_retval[0] = (ssize_t) bytes_read;
-	return 0;
+	return (0);
 }
 
 #if defined(__amd64__) && defined(COMPAT_LINUX32)
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
-	return linux_sendfile(td, (struct linux_sendfile_args *)arg);
+	/* refer to linux_sendfile, the only difference is offset is fixed to 
+	 * 64bit integers (l_loff_t is equivalent to linux's off64_t)*/
+	struct stat sb;
+	struct tcp_info ti;
+	off_t bytes_read;
+	int error;
+	l_loff_t offset;
+	struct file *fp;
+	socklen_t size_val;
+
+	error = kern_fstat(td, arg->out, &sb);
+	if (error < 0)
+		return (error);
+
+	if (!S_ISSOCK(sb.st_mode)) {
+		linux_msg(td,
+		    "sendfile is only implemented for sending to a stream socket");
+		return (ENOSYS);
+	}
+
+	size_val = sizeof(ti);
+	error = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
+	    &ti, UIO_SYSSPACE, &size_val);
+
+	if (error != 0) {
+		linux_msg(td,
+		    "sendfile is only implemented for sending to a stream socket");
+		return (ENOSYS);
+	}
+
+	offset = 0;
+	if (arg->offset != NULL) {
+		error = copyin(arg->offset, &offset, sizeof(arg->offset));
+		if (error < 0)
+			return (error);
+	}
+
+	if (offset < 0)
+		return (EINVAL);
+
+	bytes_read = 0;
+
+	AUDIT_ARG_FD(arg->in);
+
+	if ((error = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
+		return (error);
+
+	if (arg->count != 0) {
+		error = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
+		    &bytes_read, 0, td);
+		if (error < 0)
+			return (error);
+		fdrop(fp, td);
+		offset += bytes_read;
+	}
+
+	if (arg->offset != NULL) {
+		error = copyout(&offset, arg->offset, sizeof(offset));
+		if (error < 0)
+			return (error);
+	}
+
+	td->td_retval[0] = (ssize_t) bytes_read;
+	return (0);
 }
 #endif
 
