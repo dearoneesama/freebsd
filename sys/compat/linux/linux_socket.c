@@ -1609,7 +1609,7 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 	/* fstat to get info on target fd */
 	 error = kern_fstat(td, out, &sb);
 	 if (error < 0)
-	 		return (error);
+	 	return (error);
 
 	/* offset is assumed as 0 when no pointer is given */
 	current_offset = 0;
