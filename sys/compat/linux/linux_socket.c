@@ -1573,27 +1573,18 @@ out:
 	return (error);
 }
 
-int
-linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
+static int
+linux_sendfile_common(struct thread *td, l_int out, l_int in,
+	l_loff_t *offset, l_size_t count)
 {
-	struct stat sb;
-	struct tcp_info ti;
-	off_t bytes_read;
-	int error;
-	l_long offset;
-	struct file *fp;
-	socklen_t size_val;
-
 	/* XXX: The differences between freebsd and linux sendfile:
 	 * - linux_sendfile doesn't send anything when count is 0
 	 * 	whereas freebsd_sendfile sends the whole file. However,
 	 * 	in linux_sendfile given fds are still checked for if they
 	 * 	are valid or not when count is 0.
 	 * - linux_sendfile can send to any fd whereas freebsd_sendfile
-	 *   	only sends to a socket stream. Note that only socket streams
-	 *   	are implemented here. Also note that the current offset into
-	 *   	the fdin shouldn't change before and after sendfile. Meaning
-	 *   	'lseek(fd, 0, SET_CUR)' should return same before and after.
+	 *   	only sends to a socket stream. The same restriction follows
+	 *      for linux_sendfile.
 	 * - linux_sendfile doesn't have equivalents of flags and sf_hdtr of
 	 *   	freebsd_sendfile.
 	 * - linux_sendfile takes in an offset pointer and updates it to where it
@@ -1604,59 +1595,55 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 	 *   	returns 0. We use the 'bytes read' parameter to get this value.
 	 */
 
+	 /* YYY: The only difference between sendfile and sendfile64 (for 32bit
+	 *   platform where LFS is enabled) is offset type. The latter must be
+	 *   64 bit
+	 */
+
+	 struct stat sb;
+	 off_t bytes_read;
+	 int error;
+	 l_loff_t current_offset;
+	 struct file *fp;
+
 	/* fstat to get info on target fd */
-	error = kern_fstat(td, arg->out, &sb);
-	if (error < 0)
-		return (error);
+	 error = kern_fstat(td, out, &sb);
+	 if (error < 0)
+	 		return (error);
 
-	/* non-socket descriptor not implemented */
-	if (!S_ISSOCK(sb.st_mode)) {
-		linux_msg(td,
-		    "sendfile is only implemented for sending to a stream socket");
-		return (ENOSYS);
-	}
-
-	size_val = sizeof(ti);
-	error = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
-	    &ti, UIO_SYSSPACE, &size_val);
-
-	/* datagram socket not implemented */
-	if (error != 0) {
-		linux_msg(td,
-		    "sendfile is only implemented for sending to a stream socket");
-		return (ENOSYS);
-	}
-
-	/* offset is assumed as 0 when no pointer is given in linux_sendfile */
-	offset = 0;
-	if (arg->offset != NULL) {
-		error = copyin(arg->offset, &offset, sizeof(arg->offset));
+	/* offset is assumed as 0 when no pointer is given */
+	current_offset = 0;
+	if (offset != NULL) {
+		error = copyin(offset, &current_offset, sizeof(offset));
 		if (error < 0)
 			return (error);
 	}
 
-	if (offset < 0)
+	if (current_offset < 0)
 		return (EINVAL);
 
 	bytes_read = 0;
 
-	AUDIT_ARG_FD(arg->in);
-	/* Checks if fdin is valid */
-	if ((error = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
+	AUDIT_ARG_FD(in);
+	/* check if fdin is valid */
+	error = fget_read(td, in, &cap_pread_rights, &fp);
+	if (error != 0)
 		return (error);
 
-	/* Call real sendfile iff count != 0 */
-	if (arg->count != 0) {
-		error = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
-		    &bytes_read, 0, td);
+	/* call real sendfile iff count != 0 */
+	if (count != 0) {
+		error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
+			&bytes_read, 0, td);
+		fdrop(fp, td);
 		if (error < 0)
 			return (error);
+		current_offset += bytes_read;
+	} else {
 		fdrop(fp, td);
-		offset += bytes_read;
 	}
 
-	if (arg->offset != NULL) {
-		error = copyout(&offset, arg->offset, sizeof(offset));
+	if (offset != NULL) {
+		error = copyout(&current_offset, offset, sizeof(current_offset));
 		if (error < 0)
 			return (error);
 	}
@@ -1665,74 +1652,19 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 	return (0);
 }
 
+int
+linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
+{
+	return linux_sendfile_common(td, arg->out, arg->in,
+		(l_loff_t *)arg->offset, arg->count);
+}
+
 #if defined(__amd64__) && defined(COMPAT_LINUX32)
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
-	/* refer to linux_sendfile, the only difference is offset is fixed to 
-	 * 64bit integers (l_loff_t is equivalent to linux's off64_t)*/
-	struct stat sb;
-	struct tcp_info ti;
-	off_t bytes_read;
-	int error;
-	l_loff_t offset;
-	struct file *fp;
-	socklen_t size_val;
-
-	error = kern_fstat(td, arg->out, &sb);
-	if (error < 0)
-		return (error);
-
-	if (!S_ISSOCK(sb.st_mode)) {
-		linux_msg(td,
-		    "sendfile is only implemented for sending to a stream socket");
-		return (ENOSYS);
-	}
-
-	size_val = sizeof(ti);
-	error = kern_getsockopt(td, arg->out, IPPROTO_TCP, TCP_INFO,
-	    &ti, UIO_SYSSPACE, &size_val);
-
-	if (error != 0) {
-		linux_msg(td,
-		    "sendfile is only implemented for sending to a stream socket");
-		return (ENOSYS);
-	}
-
-	offset = 0;
-	if (arg->offset != NULL) {
-		error = copyin(arg->offset, &offset, sizeof(arg->offset));
-		if (error < 0)
-			return (error);
-	}
-
-	if (offset < 0)
-		return (EINVAL);
-
-	bytes_read = 0;
-
-	AUDIT_ARG_FD(arg->in);
-
-	if ((error = fget_read(td, arg->in, &cap_pread_rights, &fp)) != 0)
-		return (error);
-
-	if (arg->count != 0) {
-		error = fo_sendfile(fp, arg->out, NULL, NULL, offset, arg->count,
-		    &bytes_read, 0, td);
-		if (error < 0)
-			return (error);
-		fdrop(fp, td);
-		offset += bytes_read;
-	}
-
-	if (arg->offset != NULL) {
-		error = copyout(&offset, arg->offset, sizeof(offset));
-		if (error < 0)
-			return (error);
-	}
-
-	td->td_retval[0] = (ssize_t) bytes_read;
-	return (0);
+	return linux_sendfile_common(td, arg->out, arg->in,
+		arg->offset, arg->count);
 }
 #endif
 
