@@ -1659,16 +1659,15 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 		(l_loff_t *)arg->offset, arg->count);
 }
 
-#if defined(__amd64__) && defined(COMPAT_LINUX32)
+#if defined(__i386__) || defined(__arm__) || \
+	(defined(__amd64__) && defined(COMPAT_LINUX32))
+
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
 	return linux_sendfile_common(td, arg->out, arg->in,
 		arg->offset, arg->count);
 }
-#endif
-
-#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
 
 /* Argument list sizes for linux_socketcall */
 static const unsigned char lxs_args_cnt[] = {
@@ -1758,4 +1757,4 @@ linux_socketcall(struct thread *td, struct linux_socketcall_args *args)
 	uprintf("LINUX: 'socket' typ=%d not implemented\n", args->what);
 	return (ENOSYS);
 }
-#endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
+#endif /* __i386__ || __arm__ || (__amd64__ && COMPAT_LINUX32) */
