@@ -1652,30 +1652,35 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 	 *   updated, otherwise given pointer is used 
 	 */
 
-	if (arg->offset == NULL)
-		return linux_sendfile_common(td, arg->out, arg->in,
-			NULL, arg->count);
-
 	l_loff_t offset64;
+	l_long offset;
+	l_loff_t *offset64_ptr;
 	int ret;
 	int error;
-	l_long offset;
 
-	error = copyin(arg->offset, &offset, sizeof(offset));
-	if (error != 0)
-		return (error);
+	if (arg->offset != NULL) {
+		offset64_ptr = &offset64;
 
-	offset64 = (l_loff_t) offset;
+		error = copyin(arg->offset, &offset, sizeof(offset));
+		if (error != 0)
+			return (error);
+		offset64 = (l_loff_t) offset;
+	} else {
+		offset64_ptr = NULL;
+	}
+
 	ret = linux_sendfile_common(td, arg->out, arg->in,
-		&offset64, arg->count);
-	
-	if (offset64 > LONG_MAX)
-		return (EOVERFLOW);
+		offset64_ptr, arg->count);
 
-	offset = (l_long) offset64;
-	error = copyout(&offset, arg->offset, sizeof(offset));
-	if (error != 0)
-		return (error);
+	if (arg->offset != NULL) {
+		if (offset64 > LONG_MAX)
+			return (EOVERFLOW);
+
+		offset = (l_long) offset64;
+		error = copyout(&offset, arg->offset, sizeof(offset));
+		if (error != 0)
+			return (error);
+	}
 
 	return (ret);
 }
@@ -1686,25 +1691,29 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
-	if (arg->offset == NULL)
-		return linux_sendfile_common(td, arg->out, arg->in,
-			NULL, arg->count);
-
+	l_loff_t offset;
+	l_loff_t *offset_ptr;
 	int ret;
 	int error;
-	l_loff_t offset;
 
-	error = copyin(arg->offset, &offset, sizeof(offset));
-	if (error != 0)
-		return (error);
+	if (arg->offset != NULL) {
+		offset_ptr = &offset;
+		error = copyin(arg->offset, offset_ptr, sizeof(offset));
+		if (error != 0)
+			return (error);
+	} else {
+		offset_ptr = NULL;
+	}
 
 	ret = linux_sendfile_common(td, arg->out, arg->in,
-		&offset, arg->count);
-	
-	error = copyout(&offset, arg->offset, sizeof(offset));
-	if (error != 0)
-		return (error);
-	
+		offset_ptr, arg->count);
+
+	if (arg->offset != NULL) {
+		error = copyout(offset_ptr, arg->offset, sizeof(offset));
+		if (error != 0)
+			return (error);
+	}
+
 	return (ret);
 }
 
