@@ -52,6 +52,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/stat.h>
 #include <sys/syslog.h>
 #include <sys/un.h>
+#include <sys/unistd.h>
 
 #include <security/audit/audit.h>
 
@@ -1577,6 +1578,55 @@ static int
 linux_sendfile_common(struct thread *td, l_int out, l_int in,
 	l_loff_t *offset, l_size_t count)
 {
+	/* handles sandfile in kernel space */
+
+	 off_t bytes_read;
+	 int error;
+	 l_loff_t current_offset;
+	 struct file *fp;
+
+	if (offset != NULL)
+		current_offset = *offset;
+	else
+		current_offset = kern_lseek(td, in, 0, SEEK_CUR);
+	if (current_offset < 0)
+		return (EINVAL);
+
+	bytes_read = 0;
+
+	AUDIT_ARG_FD(in);
+
+	error = fget_read(td, in, &cap_pread_rights, &fp);
+	if (error != 0)
+		return (error);
+
+	/* call real sendfile iff count != 0 */
+	if (count != 0) {
+		error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
+			&bytes_read, 0, td);
+		fdrop(fp, td);
+		if (error < 0)
+			return (error);
+		current_offset += bytes_read;
+	} else {
+		fdrop(fp, td);
+	}
+
+	if (offset != NULL) {
+		*offset = current_offset;
+	} else {
+		error = kern_lseek(td, in, current_offset, SEEK_SET);
+		if (error < 0)
+			return (error);
+	}
+
+	td->td_retval[0] = (ssize_t) bytes_read;
+	return (0);
+}
+
+int
+linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
+{
 	/* XXX: The differences between freebsd and linux sendfile:
 	 * - linux_sendfile doesn't send anything when count is 0
 	 * 	whereas freebsd_sendfile sends the whole file. However,
@@ -1598,59 +1648,36 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 	 /* YYY: The only difference between sendfile and sendfile64 (for 32bit
 	 *   platform where LFS is enabled) is offset type. The latter must be
 	 *   64 bit
+	 *   If no offset pointer is given, in_fd's offset detail is read and
+	 *   updated, otherwise given pointer is used 
 	 */
 
-	 off_t bytes_read;
-	 int error;
-	 l_loff_t current_offset;
-	 struct file *fp;
+	if (arg->offset == NULL)
+		return linux_sendfile_common(td, arg->out, arg->in,
+			NULL, arg->count);
 
-	/* offset is assumed as 0 when no pointer is given */
-	current_offset = 0;
-	if (offset != NULL) {
-		error = copyin(offset, &current_offset, sizeof(offset));
-		if (error < 0)
-			return (error);
-	}
+	l_loff_t offset64;
+	int ret;
+	int error;
+	l_long offset;
 
-	if (current_offset < 0)
-		return (EINVAL);
-
-	bytes_read = 0;
-
-	AUDIT_ARG_FD(in);
-	/* check if fdin is valid */
-	error = fget_read(td, in, &cap_pread_rights, &fp);
+	error = copyin(arg->offset, &offset, sizeof(offset));
 	if (error != 0)
 		return (error);
 
-	/* call real sendfile iff count != 0 */
-	if (count != 0) {
-		error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
-			&bytes_read, 0, td);
-		fdrop(fp, td);
-		if (error < 0)
-			return (error);
-		current_offset += bytes_read;
-	} else {
-		fdrop(fp, td);
-	}
+	offset64 = (l_loff_t) offset;
+	ret = linux_sendfile_common(td, arg->out, arg->in,
+		&offset64, arg->count);
+	
+	if (offset64 > LONG_MAX)
+		return (EOVERFLOW);
 
-	if (offset != NULL) {
-		error = copyout(&current_offset, offset, sizeof(current_offset));
-		if (error < 0)
-			return (error);
-	}
+	offset = (l_long) offset64;
+	error = copyout(&offset, arg->offset, sizeof(offset));
+	if (error != 0)
+		return (error);
 
-	td->td_retval[0] = (ssize_t) bytes_read;
-	return (0);
-}
-
-int
-linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
-{
-	return linux_sendfile_common(td, arg->out, arg->in,
-		(l_loff_t *)arg->offset, arg->count);
+	return (ret);
 }
 
 #if defined(__i386__) || defined(__arm__) || \
@@ -1659,8 +1686,26 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
-	return linux_sendfile_common(td, arg->out, arg->in,
-		arg->offset, arg->count);
+	if (arg->offset == NULL)
+		return linux_sendfile_common(td, arg->out, arg->in,
+			NULL, arg->count);
+
+	int ret;
+	int error;
+	l_loff_t offset;
+
+	error = copyin(arg->offset, &offset, sizeof(offset));
+	if (error != 0)
+		return (error);
+
+	ret = linux_sendfile_common(td, arg->out, arg->in,
+		&offset, arg->count);
+	
+	error = copyout(&offset, arg->offset, sizeof(offset));
+	if (error != 0)
+		return (error);
+	
+	return (ret);
 }
 
 /* Argument list sizes for linux_socketcall */
