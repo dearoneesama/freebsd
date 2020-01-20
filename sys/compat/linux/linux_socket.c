@@ -1576,7 +1576,7 @@ out:
 
 static int
 linux_sendfile_common(struct thread *td, l_int out, l_int in,
-	l_loff_t *offset, l_size_t count)
+    l_loff_t *offset, l_size_t count)
 {
 	/* handles sandfile in kernel space */
 
@@ -1585,43 +1585,47 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 	 l_loff_t current_offset;
 	 struct file *fp;
 
-	if (offset != NULL)
-		current_offset = *offset;
-	else
-		current_offset = kern_lseek(td, in, 0, SEEK_CUR);
-	if (current_offset < 0)
-		return (EINVAL);
-
-	bytes_read = 0;
-
 	AUDIT_ARG_FD(in);
-
 	error = fget_read(td, in, &cap_pread_rights, &fp);
 	if (error != 0)
 		return (error);
 
-	/* call real sendfile iff count != 0 */
-	if (count != 0) {
-		error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
-			&bytes_read, 0, td);
-		fdrop(fp, td);
-		if (error < 0)
-			return (error);
-		current_offset += bytes_read;
+	if (offset != NULL) {
+		current_offset = *offset;
 	} else {
-		fdrop(fp, td);
+		error = (fp->f_ops->fo_flags & DFLAG_SEEKABLE) != 0 ?
+		    fo_seek(fp, 0, SEEK_CUR, td) : ESPIPE;
+		if (error != 0)
+			goto drop;
+		current_offset = td->td_uretoff.tdu_off;
 	}
+
+	bytes_read = 0;
+
+	/* liunx cannot have 0 count */
+	if (count <= 0 || current_offset < 0) {
+		error = EINVAL;
+		goto drop;
+	}
+
+	error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
+	    &bytes_read, 0, td);
+	if (error < 0)
+		goto drop;
+	current_offset += bytes_read;
 
 	if (offset != NULL) {
 		*offset = current_offset;
 	} else {
-		error = kern_lseek(td, in, current_offset, SEEK_SET);
-		if (error < 0)
-			return (error);
+		error = fo_seek(fp, current_offset, SEEK_SET, td);
+		if (error != 0)
+			goto drop;
 	}
 
 	td->td_retval[0] = (ssize_t) bytes_read;
-	return (0);
+drop:
+	fdrop(fp, td);
+	return (error);
 }
 
 int
@@ -1654,28 +1658,25 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 
 	l_loff_t offset64;
 	l_long offset;
-	l_loff_t *offset64_ptr;
 	int ret;
 	int error;
 
 	if (arg->offset != NULL) {
-		offset64_ptr = &offset64;
-
 		error = copyin(arg->offset, &offset, sizeof(offset));
 		if (error != 0)
 			return (error);
 		offset64 = (l_loff_t) offset;
-	} else {
-		offset64_ptr = NULL;
 	}
 
 	ret = linux_sendfile_common(td, arg->out, arg->in,
-		offset64_ptr, arg->count);
+	    arg->offset != NULL ? &offset64 : NULL, arg->count);
 
 	if (arg->offset != NULL) {
-		if (offset64 > LONG_MAX)
+#if defined(__i386__) || defined(__arm__) || \
+    (defined(__amd64__) && defined(COMPAT_LINUX32))
+		if (offset64 > INT32_MAX)
 			return (EOVERFLOW);
-
+#endif
 		offset = (l_long) offset64;
 		error = copyout(&offset, arg->offset, sizeof(offset));
 		if (error != 0)
@@ -1686,30 +1687,26 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 }
 
 #if defined(__i386__) || defined(__arm__) || \
-	(defined(__amd64__) && defined(COMPAT_LINUX32))
+    (defined(__amd64__) && defined(COMPAT_LINUX32))
 
 int
 linux_sendfile64(struct thread *td, struct linux_sendfile64_args *arg)
 {
 	l_loff_t offset;
-	l_loff_t *offset_ptr;
 	int ret;
 	int error;
 
 	if (arg->offset != NULL) {
-		offset_ptr = &offset;
-		error = copyin(arg->offset, offset_ptr, sizeof(offset));
+		error = copyin(arg->offset, &offset, sizeof(offset));
 		if (error != 0)
 			return (error);
-	} else {
-		offset_ptr = NULL;
 	}
 
 	ret = linux_sendfile_common(td, arg->out, arg->in,
-		offset_ptr, arg->count);
+		arg->offset != NULL ? &offset : NULL, arg->count);
 
 	if (arg->offset != NULL) {
-		error = copyout(offset_ptr, arg->offset, sizeof(offset));
+		error = copyout(&offset, arg->offset, sizeof(offset));
 		if (error != 0)
 			return (error);
 	}

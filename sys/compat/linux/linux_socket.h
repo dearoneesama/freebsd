@@ -133,7 +133,7 @@ struct l_ucred {
 };
 
 #if defined(__i386__) || defined(__arm__) || \
-	(defined(__amd64__) && defined(COMPAT_LINUX32))
+    (defined(__amd64__) && defined(COMPAT_LINUX32))
 
 struct linux_accept_args {
 	register_t s;
