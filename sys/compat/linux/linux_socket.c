@@ -1580,10 +1580,10 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 {
 	/* handles sandfile in kernel space */
 
-	 off_t bytes_read;
-	 int error;
-	 l_loff_t current_offset;
-	 struct file *fp;
+	off_t bytes_read;
+	int error;
+	l_loff_t current_offset;
+	struct file *fp;
 
 	AUDIT_ARG_FD(in);
 	error = fget_read(td, in, &cap_pread_rights, &fp);
@@ -1610,7 +1610,7 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 
 	error = fo_sendfile(fp, out, NULL, NULL, current_offset, count,
 	    &bytes_read, 0, td);
-	if (error < 0)
+	if (error != 0)
 		goto drop;
 	current_offset += bytes_read;
 
@@ -1622,7 +1622,7 @@ linux_sendfile_common(struct thread *td, l_int out, l_int in,
 			goto drop;
 	}
 
-	td->td_retval[0] = (ssize_t) bytes_read;
+	td->td_retval[0] = (ssize_t)bytes_read;
 drop:
 	fdrop(fp, td);
 	return (error);
@@ -1665,7 +1665,7 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 		error = copyin(arg->offset, &offset, sizeof(offset));
 		if (error != 0)
 			return (error);
-		offset64 = (l_loff_t) offset;
+		offset64 = (l_loff_t)offset;
 	}
 
 	ret = linux_sendfile_common(td, arg->out, arg->in,
@@ -1677,7 +1677,7 @@ linux_sendfile(struct thread *td, struct linux_sendfile_args *arg)
 		if (offset64 > INT32_MAX)
 			return (EOVERFLOW);
 #endif
-		offset = (l_long) offset64;
+		offset = (l_long)offset64;
 		error = copyout(&offset, arg->offset, sizeof(offset));
 		if (error != 0)
 			return (error);
